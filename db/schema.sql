@@ -41,18 +41,16 @@ CREATE INDEX IF NOT EXISTS indoinvest_catalysts_date_idx
   ON indoinvest_catalysts (date ASC);
 
 -- ─── Row-level security ───────────────────────────────────────────────────────
--- Public read; restrict writes to service role (API functions use service key)
-ALTER TABLE indoinvest_snapshots    ENABLE ROW LEVEL SECURITY;
+-- Open read+write for all (single-user personal app — no PII, no auth needed).
+-- Writes are still server-side only (SUPABASE_SERVICE_KEY is a Vercel env var,
+-- never exposed to the browser). RLS here just satisfies Supabase requirements.
+ALTER TABLE indoinvest_snapshots     ENABLE ROW LEVEL SECURITY;
 ALTER TABLE indoinvest_manual_values ENABLE ROW LEVEL SECURITY;
-ALTER TABLE indoinvest_catalysts    ENABLE ROW LEVEL SECURITY;
+ALTER TABLE indoinvest_catalysts     ENABLE ROW LEVEL SECURITY;
 
--- Anyone can read (anon key)
-CREATE POLICY "public read snapshots"      ON indoinvest_snapshots    FOR SELECT USING (true);
-CREATE POLICY "public read manual values"  ON indoinvest_manual_values FOR SELECT USING (true);
-CREATE POLICY "public read catalysts"      ON indoinvest_catalysts    FOR SELECT USING (true);
-
--- Only service role can write (API functions use SUPABASE_SERVICE_KEY)
--- (service role bypasses RLS by default — no extra policy needed)
+CREATE POLICY "public all snapshots"     ON indoinvest_snapshots     FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "public all manual values" ON indoinvest_manual_values FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "public all catalysts"     ON indoinvest_catalysts     FOR ALL USING (true) WITH CHECK (true);
 
 -- ─── Initial manual_values seed (update these to current values) ──────────────
 INSERT INTO indoinvest_manual_values (field_id, value) VALUES
