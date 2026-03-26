@@ -11,6 +11,14 @@ import { useAutoRefresh }   from './hooks/useAutoRefresh.js';
 import { encodeState, decodeState } from './hooks/useUrlState.js';
 import { CATALYSTS, CATALYST_TYPES } from './data/catalysts.js';
 import {
+  loadSnapshots,
+  saveSnapshot,
+  loadManualValues,
+  updateManualValue as dbUpdateManualValue,
+  loadCurrentValues,
+  loadLastUpdate,
+} from './lib/db.js';
+import {
   EXTRA_TICKERS,
   EXTRA_BASE_PROBS,
   EXTRA_PRICE_INDICATORS,
@@ -248,11 +256,9 @@ function healthLabel(score) {
   return               { label:'Crisis Mode',   color:'#7B241C' };
 }
 
-// ─── Storage ──────────────────────────────────────────────────────────────────
-
-const STORAGE_KEY = 'indoinvest-v2';
-function loadStorage()      { try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; } }
-function persistStorage(o)  { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(o)); } catch {} }
+// ─── Defaults ─────────────────────────────────────────────────────────────────
+// Note: indicator defaults are fallback UI values only.
+// Actual persisted values come from DB (via db.js) on mount.
 
 function defaultValues() {
   const d = {};
@@ -264,15 +270,16 @@ function defaultValues() {
 
 export default function Dashboard() {
   const [values, setValues]             = useState(() => {
-    // Priority: URL hash → localStorage → defaults
+    // Priority: URL hash → localStorage cache (sync) → defaults
+    // DB values are merged asynchronously in the mount useEffect below
     const fromHash = decodeState(window.location.hash);
     if (fromHash && typeof fromHash === 'object' && Object.keys(fromHash).length > 3)
       return { ...defaultValues(), ...fromHash };
-    const saved = loadStorage();
-    return saved?.current ? { ...defaultValues(), ...saved.current } : defaultValues();
+    const saved = loadCurrentValues();    // sync read from localStorage cache
+    return saved ? { ...defaultValues(), ...saved } : defaultValues();
   });
-  const [history, setHistory]           = useState(() => loadStorage()?.history || []);
-  const [lastUpdate, setLastUpdate]     = useState(() => loadStorage()?.lastUpdate || null);
+  const [history, setHistory]           = useState([]);  // loaded async from DB in useEffect
+  const [lastUpdate, setLastUpdate]     = useState(() => loadLastUpdate()); // sync from localStorage
   const [activeTicker, setActiveTicker] = useState(0);
   const [marketState, setMarketState]   = useState(null);
   const [fetchStatus, setFetchStatus]   = useState(null);
@@ -288,6 +295,32 @@ export default function Dashboard() {
   // Ref so fetchData can always read latest values without re-creating
   const valuesRef = useRef(values);
   useEffect(() => { valuesRef.current = values; }, [values]);
+
+  // ── DB initialisation (runs once on mount) ──────────────────────────────────
+  useEffect(() => {
+    (async () => {
+      // 1. Load manual field values from DB and merge (DB wins over localStorage defaults)
+      const manualMap = await loadManualValues();
+      if (Object.keys(manualMap).length > 0) {
+        setValues(prev => {
+          const merged = { ...prev };
+          Object.entries(manualMap).forEach(([k, v]) => {
+            // Only overwrite manual fields; never stomp over URL-decoded state
+            if (MANUAL_FIELDS.has(k)) merged[k] = v;
+          });
+          return merged;
+        });
+      }
+      // 2. Load snapshot history from DB
+      const snapshots = await loadSnapshots(90);
+      if (snapshots.length > 0) {
+        setHistory(snapshots);
+        const latest = snapshots[snapshots.length - 1];
+        const ts = latest.created_at || latest.date;
+        if (ts) setLastUpdate(ts);
+      }
+    })();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-refresh countdown (resets when lastUpdate changes after each fetch)
   useEffect(() => {
@@ -309,16 +342,20 @@ export default function Dashboard() {
     window.history.replaceState(null, '', '#' + encoded);
   }, [values]);
 
-  const doSave = useCallback((v, hist, note = '') => {
+  const doSave = useCallback(async (v, hist, note = '', dataSource = 'manual') => {
     setSaving(true);
-    const now = new Date().toISOString();
-    const entry = { date: now, values: { ...v } };
-    if (note) entry.note = note;
-    const nh = [...hist, entry].slice(-90);
-    setHistory(nh);
-    setLastUpdate(now);
-    persistStorage({ current: v, history: nh, lastUpdate: now });
-    setSaving(false);
+    try {
+      // Compute probs for all tickers at save time so history is self-contained
+      const probs = {};
+      TICKERS.forEach(t => { probs[t] = computeProbs(v, t); });
+      // saveSnapshot writes to DB (async) + localStorage (sync) and returns entry
+      const entry = await saveSnapshot(v, probs, note || '', dataSource);
+      const nh = [...hist, entry].slice(-90);
+      setHistory(nh);
+      setLastUpdate(entry.created_at || entry.date);
+    } finally {
+      setSaving(false);
+    }
   }, []);
 
   const fetchData = useCallback(async () => {
@@ -357,7 +394,7 @@ export default function Dashboard() {
       setLiveFields(updated);
       if (newAlerts.length > 0) setZoneAlerts(newAlerts);
       if (data.marketState) setMarketState(data.marketState);
-      doSave(next, history);
+      await doSave(next, history, '', 'auto');
       setFetchStatus(`ok: ${updated.size} fields updated · ${data.date || new Date().toLocaleDateString()}`);
     } catch (e) {
       setFetchStatus('error: ' + (e.message || 'fetch failed'));
@@ -367,6 +404,10 @@ export default function Dashboard() {
   const updateValue = (id, val) => {
     setValues(prev => ({ ...prev, [id]: val }));
     setLiveFields(prev => { const s = new Set(prev); s.delete(id); return s; });
+    // Persist manual field changes to DB (fire-and-forget)
+    if (MANUAL_FIELDS.has(id)) {
+      dbUpdateManualValue(id, val);
+    }
   };
 
   // ── Derived ──────────────────────────────────────────────────────────────────
