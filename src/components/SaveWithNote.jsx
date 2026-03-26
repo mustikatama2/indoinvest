@@ -38,14 +38,15 @@ export function SaveWithNote({ saving, onSave }) {
     if (e.key === 'Escape') { e.preventDefault(); handleCancel(); }
   }
 
+  const btnBase = {
+    fontSize: 12, borderRadius: 5, cursor: 'pointer', border: '1px solid #333',
+    background: '#1c1c1c', color: '#e4e4e4', fontFamily: 'inherit',
+  };
+
   if (!expanded) {
     return (
-      <button
-        className="btn"
-        onClick={handleOpen}
-        disabled={saving}
-        style={{ display: 'flex', alignItems: 'center', gap: 4 }}
-      >
+      <button onClick={handleOpen} disabled={saving}
+        style={{ ...btnBase, padding: '6px 12px', display: 'flex', alignItems: 'center', gap: 4 }}>
         💾 {saving ? 'Saving…' : 'Save'}
       </button>
     );
@@ -62,31 +63,18 @@ export function SaveWithNote({ saving, onSave }) {
         onKeyDown={handleKeyDown}
         disabled={saving}
         style={{
-          width: 200,
-          fontSize: 12,
-          background: 'var(--input-bg, #1a1a1a)',
-          color: 'var(--text-primary, #e4e4e4)',
-          border: '1px solid var(--border, #2a2a2a)',
-          borderRadius: 5,
-          padding: '4px 8px',
-          outline: 'none',
+          width: 180, fontSize: 12,
+          background: '#1a1a1a', color: '#e4e4e4',
+          border: '1px solid #333', borderRadius: 5,
+          padding: '5px 8px', outline: 'none',
         }}
       />
-      <button
-        className="btn btn-primary"
-        onClick={handleSave}
-        disabled={saving}
-        style={{ fontSize: 12, padding: '4px 10px' }}
-      >
+      <button onClick={handleSave} disabled={saving}
+        style={{ ...btnBase, padding: '5px 12px', background: '#1e3554', color: '#93c5fd', border: 'none' }}>
         {saving ? '…' : 'Save'}
       </button>
-      <button
-        className="btn"
-        onClick={handleCancel}
-        disabled={saving}
-        style={{ fontSize: 12, padding: '4px 8px' }}
-        title="Cancel"
-      >
+      <button onClick={handleCancel} disabled={saving}
+        style={{ ...btnBase, padding: '5px 8px', color: '#8a8a8a' }} title="Cancel">
         ×
       </button>
     </div>

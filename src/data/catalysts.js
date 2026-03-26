@@ -85,15 +85,28 @@ export const CATALYSTS = [
   { date: '2025-12-01', type: 'macro_id', title: 'BPS CPI November 2025', impact: 'medium' },
   { date: '2026-02-05', type: 'macro_id', title: 'BPS GDP Q4 2025',      impact: 'high',   note: 'Full-year 2025 growth final read' },
 
+  // ── Earnings Q1 2026 results (April/May 2026) ──
+  { date: '2026-04-25', type: 'earnings', title: 'BBCA Q1 2026 Results', impact: 'high',   ticker: 'BBCA' },
+  { date: '2026-04-28', type: 'earnings', title: 'BBRI Q1 2026 Results', impact: 'high',   ticker: 'BBRI' },
+  { date: '2026-04-29', type: 'earnings', title: 'BMRI Q1 2026 Results', impact: 'high',   ticker: 'BMRI' },
+  { date: '2026-04-30', type: 'earnings', title: 'BBNI Q1 2026 Results', impact: 'high',   ticker: 'BBNI' },
+  { date: '2026-05-06', type: 'earnings', title: 'BRIS Q1 2026 Results', impact: 'medium', ticker: 'BRIS' },
+
+  // ── Key Macro Indonesia 2026 ──
+  { date: '2026-04-01', type: 'macro_id', title: 'BPS CPI March 2026',    impact: 'medium' },
+  { date: '2026-05-05', type: 'macro_id', title: 'BPS GDP Q1 2026',       impact: 'high', note: 'First full-year 2026 growth read' },
+  { date: '2026-05-04', type: 'macro_id', title: 'BPS CPI April 2026',    impact: 'medium' },
+  { date: '2026-06-01', type: 'macro_id', title: 'BPS CPI May 2026',      impact: 'medium' },
+
   // ── Moody's review window ──
   { date: '2025-06-01', type: 'moody_window', title: "Moody's Mid-Year Review Window",  impact: 'high', note: "Baa2 negative watch — downgrade risk elevated" },
   { date: '2025-11-01', type: 'moody_window', title: "Moody's Year-End Review Window",  impact: 'high' },
-  { date: '2026-06-01', type: 'moody_window', title: "Moody's Mid-Year Review Window",  impact: 'high' },
+  { date: '2026-06-01', type: 'moody_window', title: "Moody's Mid-Year Review Window",  impact: 'high', note: 'Critical — rating decision expected H1 2026' },
 
-  // ── Dividends (approx ex-dates) ──
-  { date: '2025-05-15', type: 'dividend', title: 'BBCA Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBCA' },
-  { date: '2025-05-20', type: 'dividend', title: 'BBRI Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBRI' },
-  { date: '2025-05-22', type: 'dividend', title: 'BMRI Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BMRI' },
-  { date: '2025-05-27', type: 'dividend', title: 'BBNI Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBNI' },
-  { date: '2025-06-10', type: 'dividend', title: 'BRIS Dividend Ex-Date (est.)', impact: 'low',    ticker: 'BRIS' },
+  // ── Dividends FY2025 payouts (est. May/Jun 2026) ──
+  { date: '2026-05-14', type: 'dividend', title: 'BBCA FY2025 Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBCA' },
+  { date: '2026-05-19', type: 'dividend', title: 'BBRI FY2025 Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBRI' },
+  { date: '2026-05-21', type: 'dividend', title: 'BMRI FY2025 Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BMRI' },
+  { date: '2026-05-26', type: 'dividend', title: 'BBNI FY2025 Dividend Ex-Date (est.)', impact: 'medium', ticker: 'BBNI' },
+  { date: '2026-06-09', type: 'dividend', title: 'BRIS FY2025 Dividend Ex-Date (est.)', impact: 'low',    ticker: 'BRIS' },
 ];

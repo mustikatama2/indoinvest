@@ -1,9 +1,15 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Sparkline }     from './components/Sparkline.jsx';
-import { DeltaChip }     from './components/DeltaChip.jsx';
-import { PositionCalc }  from './components/PositionCalc.jsx';
-import { ZoneAlert }     from './components/ZoneAlert.jsx';
+import { Sparkline }        from './components/Sparkline.jsx';
+import { DeltaChip }        from './components/DeltaChip.jsx';
+import { PositionCalc }     from './components/PositionCalc.jsx';
+import { ZoneAlert }        from './components/ZoneAlert.jsx';
+import { ProbTrendChart }   from './components/ProbTrendChart.jsx';
+import { SensitivityTable } from './components/SensitivityTable.jsx';
+import { CatalystCalendar } from './components/CatalystCalendar.jsx';
+import { SaveWithNote }     from './components/SaveWithNote.jsx';
+import { useAutoRefresh }   from './hooks/useAutoRefresh.js';
 import { encodeState, decodeState } from './hooks/useUrlState.js';
+import { CATALYSTS, CATALYST_TYPES } from './data/catalysts.js';
 import {
   EXTRA_TICKERS,
   EXTRA_BASE_PROBS,
@@ -272,13 +278,29 @@ export default function Dashboard() {
   const [fetchStatus, setFetchStatus]   = useState(null);
   const [saving, setSaving]             = useState(false);
   const [expanded, setExpanded]         = useState(-1);
-  const [liveFields, setLiveFields]     = useState(new Set());
-  const [zoneAlerts, setZoneAlerts]     = useState([]);
-  const [posCalcTicker, setPosCalcTicker] = useState(null); // ticker string or null
+  const [liveFields, setLiveFields]       = useState(new Set());
+  const [zoneAlerts, setZoneAlerts]       = useState([]);
+  const [posCalcTicker, setPosCalcTicker] = useState(null);
+  const [refreshInterval, setRefreshInterval] = useState(null); // null | ms
+  const [countdown, setCountdown]         = useState(null);     // seconds remaining
+  const [showSensitivity, setShowSensitivity] = useState(false);
 
   // Ref so fetchData can always read latest values without re-creating
   const valuesRef = useRef(values);
   useEffect(() => { valuesRef.current = values; }, [values]);
+
+  // Auto-refresh countdown (resets when lastUpdate changes after each fetch)
+  useEffect(() => {
+    if (!refreshInterval) { setCountdown(null); return; }
+    setCountdown(Math.round(refreshInterval / 1000));
+    const id = setInterval(() => {
+      setCountdown(c => (c != null && c > 1) ? c - 1 : Math.round(refreshInterval / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [refreshInterval, lastUpdate]);
+
+  // Wire up auto-refresh
+  useAutoRefresh(fetchData, refreshInterval);
 
   // Sync values to URL hash (for sharing)
   useEffect(() => {
@@ -287,10 +309,12 @@ export default function Dashboard() {
     window.history.replaceState(null, '', '#' + encoded);
   }, [values]);
 
-  const doSave = useCallback((v, hist) => {
+  const doSave = useCallback((v, hist, note = '') => {
     setSaving(true);
     const now = new Date().toISOString();
-    const nh = [...hist, { date: now, values: { ...v } }].slice(-90);
+    const entry = { date: now, values: { ...v } };
+    if (note) entry.note = note;
+    const nh = [...hist, entry].slice(-90);
     setHistory(nh);
     setLastUpdate(now);
     persistStorage({ current: v, history: nh, lastUpdate: now });
@@ -360,6 +384,14 @@ export default function Dashboard() {
   const sparkData  = history.slice(-30).map(h => h.values[priceKey]).filter(v => v != null && v > 0);
   // Delta vs previous snapshot
   const prevPrice  = history.length > 0 ? history[history.length - 1]?.values[priceKey] : null;
+  // Stale data warning
+  const dataAgeHours = lastUpdate ? (Date.now() - new Date(lastUpdate).getTime()) / 3_600_000 : null;
+  const isStale      = dataAgeHours != null && dataAgeHours > 24;
+  // Probability trend chart data
+  const chartData = history.slice(-20).map(entry => ({
+    date:  entry.date,
+    probs: computeProbs(entry.values, ticker),
+  }));
 
   return (
     <div style={{ padding:'4px 0' }}>
@@ -406,7 +438,8 @@ export default function Dashboard() {
       {/* ── Action bar ──────────────────────────────────────────────────── */}
       <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:10, flexWrap:'wrap' }}>
         <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>8 fields auto · 4 manual</div>
-        <div style={{ display:'flex', gap:6 }}>
+        <div style={{ display:'flex', gap:6, alignItems:'center', flexWrap:'wrap' }}>
+          {/* Live fetch */}
           <button onClick={fetchData} disabled={fetchStatus==='fetching'} style={{
             fontSize:12, padding:'6px 14px', fontWeight:600, border:'none', borderRadius:6,
             background: fetchStatus==='fetching' ? 'var(--color-background-secondary)' : '#1e3554',
@@ -415,15 +448,28 @@ export default function Dashboard() {
           }}>
             {fetchStatus==='fetching' ? '⏳ Fetching…' : '⚡ Live fetch'}
           </button>
-          <button onClick={() => doSave(values, history)} disabled={saving} style={{
-            fontSize:12, padding:'6px 12px', fontWeight:500,
-            background:'var(--color-background-elevated)', color:'var(--color-text-primary)',
-            border:'1px solid var(--color-border-tertiary)', borderRadius:6,
-          }}>
-            {saving ? 'Saving…' : '💾 Save'}
-          </button>
-          <button
-            title="Copy shareable link"
+
+          {/* Auto-refresh */}
+          <div style={{ display:'flex', alignItems:'center', gap:4 }}>
+            <select value={refreshInterval ?? ''} onChange={e => setRefreshInterval(e.target.value ? parseInt(e.target.value) : null)}
+              style={{ fontSize:11, padding:'5px 6px', background:'var(--color-background-elevated)', color:'var(--color-text-secondary)', border:'1px solid var(--color-border-tertiary)', borderRadius:6 }}>
+              <option value="">🔄 Off</option>
+              <option value="300000">5m</option>
+              <option value="900000">15m</option>
+              <option value="1800000">30m</option>
+            </select>
+            {countdown != null && (
+              <span style={{ fontSize:10, color:'var(--color-text-tertiary)', fontVariantNumeric:'tabular-nums', minWidth:34 }}>
+                {`${Math.floor(countdown/60)}:${String(countdown%60).padStart(2,'0')}`}
+              </span>
+            )}
+          </div>
+
+          {/* Save with note */}
+          <SaveWithNote saving={saving} onSave={(note) => doSave(values, history, note)} />
+
+          {/* Share link */}
+          <button title="Copy shareable link"
             onClick={() => { navigator.clipboard?.writeText(window.location.href); setFetchStatus('ok: link copied to clipboard'); }}
             style={{ fontSize:12, padding:'6px 10px', background:'var(--color-background-elevated)', color:'var(--color-text-secondary)', border:'1px solid var(--color-border-tertiary)', borderRadius:6 }}>
             🔗
@@ -440,6 +486,21 @@ export default function Dashboard() {
           border:`1px solid ${fetchStatus.startsWith('error')?'rgba(192,57,43,0.2)':'rgba(30,132,73,0.2)'}`,
         }}>
           {fetchStatus.startsWith('error') ? '⚠ ' : '✓ '}{fetchStatus.replace(/^(ok|error): ?/,'')}
+        </div>
+      )}
+
+      {/* Stale data warning */}
+      {isStale && (
+        <div style={{
+          fontSize:11, padding:'5px 10px', marginBottom:10, borderRadius:5,
+          background:'rgba(211,84,0,0.08)', color:'#D35400',
+          border:'1px solid rgba(211,84,0,0.2)',
+          display:'flex', justifyContent:'space-between', alignItems:'center',
+        }}>
+          <span>⚠ Data is {Math.round(dataAgeHours ?? 0)}h old — prices may be stale</span>
+          <button onClick={fetchData} style={{ fontSize:11, color:'#D35400', background:'none', border:'none', cursor:'pointer', textDecoration:'underline' }}>
+            Refresh now
+          </button>
         </div>
       )}
 
@@ -540,6 +601,26 @@ export default function Dashboard() {
         ))}
       </div>
 
+      {/* ── Sensitivity analysis ────────────────────────────────────────── */}
+      <div style={{ marginBottom:14 }}>
+        <div onClick={() => setShowSensitivity(s => !s)}
+          style={{ display:'flex', justifyContent:'space-between', alignItems:'center', cursor:'pointer', marginBottom:showSensitivity?6:0 }}>
+          <SectionLabel style={{ marginBottom:0 }}>Sensitivity Analysis — {ticker}</SectionLabel>
+          <span style={{ fontSize:10, color:'var(--color-text-tertiary)', display:'inline-block', transform:showSensitivity?'rotate(90deg)':'none', transition:'transform .15s' }}>▶</span>
+        </div>
+        {showSensitivity && (
+          <SensitivityTable
+            indicators={INDICATORS}
+            values={values}
+            ticker={ticker}
+            baseProbs={BASE_PROBS}
+            scenarios={SCENARIOS}
+            sColors={S_COLORS}
+            computeProbs={computeProbs}
+          />
+        )}
+      </div>
+
       {/* ── 12-month scenario accordion ─────────────────────────────────── */}
       <SectionLabel>{ticker} — 12-month scenarios</SectionLabel>
       {SCENARIOS.map((s, i) => {
@@ -589,7 +670,9 @@ export default function Dashboard() {
                 const dt = new Date(entry.date);
                 return (
                   <React.Fragment key={ei}>
-                    <Cell>{dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}</Cell>
+                    <Cell title={entry.note || undefined} style={{ cursor: entry.note ? 'help' : undefined, textDecoration: entry.note ? 'underline dotted #555' : undefined }}>
+                      {dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}{entry.note ? ' 📝' : ''}
+                    </Cell>
                     {p.map((prob, pi) => (
                       <Cell key={pi} style={{ background:`${S_COLORS[pi]}${Math.round(prob*0.5).toString(16).padStart(2,'0')}`, color:S_COLORS[pi], fontWeight:600, textAlign:'center' }}>{prob}%</Cell>
                     ))}
@@ -604,11 +687,27 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* ── Probability trend chart ─────────────────────────────────────── */}
+      {chartData.length >= 2 && (
+        <div style={{ marginTop:16 }}>
+          <SectionLabel>Probability trend — {ticker}</SectionLabel>
+          <div style={{ background:'#1c1c1c', borderRadius:10, padding:'14px 14px 8px', border:'1px solid #2a2a2a' }}>
+            <ProbTrendChart data={chartData} scenarios={SCENARIOS} colors={S_COLORS} height={160} />
+          </div>
+        </div>
+      )}
+
+      {/* ── Catalyst calendar ───────────────────────────────────────────── */}
+      <div style={{ marginTop:16 }}>
+        <SectionLabel>Catalyst Calendar</SectionLabel>
+        <CatalystCalendar catalysts={CATALYSTS} types={CATALYST_TYPES} ticker={ticker} />
+      </div>
+
       {/* ── Footer ──────────────────────────────────────────────────────── */}
       <div style={{ fontSize:10, color:'var(--color-text-tertiary)', padding:'14px 0 4px', marginTop:12, lineHeight:1.7 }}>
         Live prices via Yahoo Finance (BBCA/BBRI/BMRI/BBNI/BRIS · ^JKSE · IDR=X · BZ=F) — no API key required.
         BI Rate, SBN yield, foreign flow, and Moody's updated manually. 🔗 copies a shareable link with current values.
-        Not financial advice.
+        Auto-refresh keeps prices current during market hours. Not financial advice.
       </div>
     </div>
   );

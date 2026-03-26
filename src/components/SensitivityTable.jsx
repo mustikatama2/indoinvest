@@ -76,7 +76,7 @@ export function SensitivityTable({ indicators, values, ticker, baseProbs, scenar
           style={selectStyle}
         >
           {macroIndicators.map(ind => (
-            <option key={ind.id} value={ind.id}>{ind.label || ind.id}</option>
+            <option key={ind.id} value={ind.id}>{ind.name || ind.id}</option>
           ))}
         </select>
         <span style={{ fontSize: 11, color: '#555' }}>vs</span>
@@ -86,7 +86,7 @@ export function SensitivityTable({ indicators, values, ticker, baseProbs, scenar
           style={selectStyle}
         >
           {macroIndicators.map(ind => (
-            <option key={ind.id} value={ind.id}>{ind.label || ind.id}</option>
+            <option key={ind.id} value={ind.id}>{ind.name || ind.id}</option>
           ))}
         </select>
       </div>
