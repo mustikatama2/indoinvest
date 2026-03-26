@@ -56,3 +56,23 @@ input[type="number"]:focus, select:focus {
   outline: 1px solid var(--color-border-primary);
 }
 button { font-family: inherit; cursor: pointer; }
+
+/* ─── Utility classes ────────────────────────────────────────────────────── */
+.ticker-tabs { display: flex; gap: 4px; }
+.scenario-grid { display: grid; }
+.indicator-row { display: grid; }
+
+/* ─── Mobile responsive ──────────────────────────────────────────────────── */
+@media (max-width: 480px) {
+  /* Make scenario grid 2 cols on mobile */
+  .scenario-grid { grid-template-columns: repeat(2, 1fr) !important; }
+  /* Make indicator rows stack */
+  .indicator-row { grid-template-columns: 1fr 56px !important; }
+  .indicator-label { font-size: 10px !important; }
+  /* Ticker tabs full width */
+  .ticker-tabs button { flex: 1; padding: 8px 4px !important; font-size: 12px !important; }
+}
+
+@media (max-width: 360px) {
+  .scenario-grid { grid-template-columns: 1fr 1fr !important; }
+}
