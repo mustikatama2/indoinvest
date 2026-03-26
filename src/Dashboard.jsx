@@ -31,11 +31,7 @@ import {
   computeHealthScore, healthLabel, defaultValues,
 } from './lib/indicators.js';
 
-// ─── Constants (imported from lib/indicators.js) ──────────────────────────────
-// TICKERS, SCENARIOS, S_COLORS, BASE_PROBS etc. are all imported above.
-// Only Dashboard-specific constants live here.
-
-// All indicator constants and pure functions imported from lib/indicators.js above.
+// All indicator constants + pure functions imported from lib/indicators.js above.
 
 // ─── Dashboard ────────────────────────────────────────────────────────────────
 
@@ -52,6 +48,10 @@ export default function Dashboard({ externalActiveTicker, onActiveTickerChange }
   const [history, setHistory]           = useState([]);  // loaded async from DB in useEffect
   const [lastUpdate, setLastUpdate]     = useState(() => loadLastUpdate()); // sync from localStorage
   const [activeTicker, setActiveTicker] = useState(() => externalActiveTicker ?? 0);
+  // Sync when parent (App) changes the active ticker (e.g. clicking ticker in CompareView)
+  useEffect(() => {
+    if (externalActiveTicker != null) setActiveTicker(externalActiveTicker);
+  }, [externalActiveTicker]);
   const [marketState, setMarketState]   = useState(null);
   const [fetchStatus, setFetchStatus]   = useState(null);
   const [saving, setSaving]             = useState(false);
@@ -63,8 +63,10 @@ export default function Dashboard({ externalActiveTicker, onActiveTickerChange }
   const [countdown, setCountdown]         = useState(null);     // seconds remaining
   const [showSensitivity, setShowSensitivity] = useState(false);
 
-  // Price alerts
+  // Price alerts — use a ref so fetchData closure always calls the latest checkAlerts
   const { alerts, setAlert, removeAlert, checkAlerts, permission, requestPerm } = usePriceAlerts();
+  const checkAlertsRef = useRef(checkAlerts);
+  useEffect(() => { checkAlertsRef.current = checkAlerts; }, [checkAlerts]);
 
   // Ref so fetchData can always read latest values without re-creating
   const valuesRef = useRef(values);
@@ -166,7 +168,7 @@ export default function Dashboard({ externalActiveTicker, onActiveTickerChange }
       setLiveFields(updated);
       if (newAlerts.length > 0) setZoneAlerts(newAlerts);
       if (data.marketState) setMarketState(data.marketState);
-      checkAlerts(prev, next); // fire browser notifications if targets crossed
+      checkAlertsRef.current(prev, next); // fire notifications via ref (avoids stale closure)
       await doSave(next, history, '', 'auto');
       setFetchStatus(`ok: ${updated.size} fields updated · ${data.date || new Date().toLocaleDateString()}`);
     } catch (e) {

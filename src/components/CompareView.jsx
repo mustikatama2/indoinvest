@@ -3,8 +3,8 @@
 
 import React, { useState, useEffect } from 'react';
 import {
-  TICKERS, SCENARIOS, S_COLORS, BASE_PROBS,
-  PRICE_INDICATORS, computeProbs, getAction, computeHealthScore, healthLabel,
+  TICKERS, SCENARIOS, S_COLORS,
+  computeProbs, getAction, computeHealthScore, healthLabel,
 } from '../lib/indicators.js';
 import { loadCurrentValues, loadSnapshots } from '../lib/db.js';
 import { Sparkline } from './Sparkline.jsx';
@@ -125,7 +125,7 @@ export function CompareView({ onSelectTicker }) {
     const bi = getAction(b, values);
     const zoneOrder = { 'Aggr. Buy':0, 'Accumulate':1, 'Fair':2, 'Full':3, '?':4 };
     if (sortBy === 'zone')    return (zoneOrder[ai.zone]??4) - (zoneOrder[bi.zone]??4);
-    if (sortBy === 'bullish') return computeProbs(b, values)[0] - computeProbs(a, values)[0];
+    if (sortBy === 'bullish') return computeProbs(values, b)[0] - computeProbs(values, a)[0];
     if (sortBy === 'price')   return (values[b.toLowerCase()+'Price']||0) - (values[a.toLowerCase()+'Price']||0);
     return 0;
   });

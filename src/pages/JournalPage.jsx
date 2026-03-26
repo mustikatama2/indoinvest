@@ -3,7 +3,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { loadSnapshots } from '../lib/db.js';
-import { TICKERS, SCENARIOS, S_COLORS, computeProbs, computeHealthScore, healthLabel } from '../lib/indicators.js';
+import { TICKERS, S_COLORS, computeProbs, computeHealthScore, healthLabel } from '../lib/indicators.js';
 
 function ProbMini({ probs }) {
   return (
