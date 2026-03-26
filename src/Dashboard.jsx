@@ -1,13 +1,30 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
 
 const TICKERS = ['BBCA', 'BBRI', 'BMRI'];
 const SCENARIOS = ['V-shape recovery', 'Gradual grind', 'Sideways chop', 'Extended bear', 'Full crisis'];
-const S_COLORS = ['#1E8449', '#2874A6', '#D35400', '#C0392B', '#7B241C'];
+const S_COLORS  = ['#1E8449', '#2874A6', '#D35400', '#C0392B', '#7B241C'];
+
 const BASE_PROBS = {
   BBCA: [15, 40, 25, 15, 5],
   BBRI: [12, 35, 28, 18, 7],
   BMRI: [15, 38, 27, 15, 5],
 };
+
+// Fields automatically fetched from Yahoo Finance
+const AUTO_FIELDS   = new Set(['bbcaPrice', 'bbriPrice', 'bmriPrice', 'ihsg', 'fx', 'oil']);
+// Fields the user must update manually
+const MANUAL_FIELDS = new Set(['sbn10y', 'biRate', 'foreignFlow', 'moodys']);
+
+const MANUAL_HINTS = {
+  sbn10y:      'Updated daily — check DJPPR or Investing.com',
+  biRate:      'Changed at RDG BI meetings (~8×/yr) — check bi.go.id',
+  foreignFlow: 'Monthly IDX data — check idx.co.id/berita/statistik',
+  moodys:      'Rating actions only — update on official Moody\'s announcements',
+};
+
+// ─── Indicator Definitions ────────────────────────────────────────────────────
 
 const INDICATORS = [
   {
@@ -84,7 +101,7 @@ const INDICATORS = [
     ],
   },
   {
-    id: 'biRate', name: 'BI Rate', default: 4.75, step: 0.25,
+    id: 'biRate', name: 'BI Rate', default: 5.75, step: 0.25,
     thresholds: [
       { below: 4.0, scores: [3,1,0,0,0] },
       { below: 4.5, scores: [2,2,0,0,0] },
@@ -123,12 +140,13 @@ const INDICATORS = [
   {
     id: 'moodys', name: "Moody's status", default: 1, step: 1, isSelect: true,
     options: [
-      { value: 0, label: 'Baa2 stable',    scores: [3,2,0,0,0] },
-      { value: 1, label: 'Baa2 negative',  scores: [0,1,2,1,0] },
-      { value: 2, label: 'Baa3 stable',    scores: [0,0,1,2,1] },
-      { value: 3, label: 'Baa3 negative',  scores: [0,0,0,1,3] },
-      { value: 4, label: 'Sub-IG',         scores: [0,0,0,0,4] },
+      { value: 0, label: 'Baa2 stable',   scores: [3,2,0,0,0] },
+      { value: 1, label: 'Baa2 negative', scores: [0,1,2,1,0] },
+      { value: 2, label: 'Baa3 stable',   scores: [0,0,1,2,1] },
+      { value: 3, label: 'Baa3 negative', scores: [0,0,0,1,3] },
+      { value: 4, label: 'Sub-IG',        scores: [0,0,0,0,4] },
     ],
+    // zones indexed by option.value directly
     zones: [
       { max:0, label:'Stable',   color:'#1E8449' },
       { max:1, label:'Negative', color:'#D35400' },
@@ -148,7 +166,7 @@ const INDICATORS = [
       { below:99999, scores:[3,1,0,0,0] },
     ],
     zones: [
-      { max:6200,  label:'Aggr. AQ',  color:'#C0392B' },
+      { max:6200,  label:'Aggr. Buy', color:'#C0392B' },
       { max:7200,  label:'Accumulate',color:'#D35400' },
       { max:8500,  label:'Fair',      color:'#1E8449' },
       { max:99999, label:'Full',      color:'#2874A6' },
@@ -166,7 +184,7 @@ const INDICATORS = [
       { below:99999, scores:[3,1,0,0,0] },
     ],
     zones: [
-      { max:3000,  label:'Aggr. AQ',  color:'#C0392B' },
+      { max:3000,  label:'Aggr. Buy', color:'#C0392B' },
       { max:3600,  label:'Accumulate',color:'#D35400' },
       { max:4300,  label:'Fair',      color:'#1E8449' },
       { max:99999, label:'Full',      color:'#2874A6' },
@@ -184,7 +202,7 @@ const INDICATORS = [
       { below:99999, scores:[3,1,0,0,0] },
     ],
     zones: [
-      { max:4200,  label:'Aggr. AQ',  color:'#C0392B' },
+      { max:4200,  label:'Aggr. Buy', color:'#C0392B' },
       { max:5200,  label:'Accumulate',color:'#D35400' },
       { max:6200,  label:'Fair',      color:'#1E8449' },
       { max:99999, label:'Full',      color:'#2874A6' },
@@ -192,10 +210,10 @@ const INDICATORS = [
   },
 ];
 
+// ─── Pure helpers ─────────────────────────────────────────────────────────────
+
 function getZone(ind, val) {
-  for (const z of ind.zones) {
-    if (val <= z.max) return z;
-  }
+  for (const z of ind.zones) { if (val <= z.max) return z; }
   return ind.zones[ind.zones.length - 1];
 }
 
@@ -204,9 +222,7 @@ function getScores(ind, val) {
     const o = ind.options.find(opt => opt.value === val);
     return o ? o.scores : [0,0,1,0,0];
   }
-  for (const t of ind.thresholds) {
-    if (val < t.below) return t.scores;
-  }
+  for (const t of ind.thresholds) { if (val < t.below) return t.scores; }
   return ind.thresholds[ind.thresholds.length - 1].scores;
 }
 
@@ -231,7 +247,7 @@ function getAction(ticker, values) {
   if (!ind) return { zone: '?', color: '#888', action: '' };
   const z = getZone(ind, price);
   const actions = {
-    'Aggr. AQ':   'Deploy 3–4× tranche. Generational entry.',
+    'Aggr. Buy':  'Deploy 3–4× tranche. Generational entry.',
     'Accumulate': 'Normal tranches. Good risk-reward.',
     'Fair':       'Hold. Stop adding.',
     'Full':       'Trim 10–20%.',
@@ -239,53 +255,83 @@ function getAction(ticker, values) {
   return { zone: z.label, color: z.color, action: actions[z.label] || '' };
 }
 
-const STORAGE_KEY = 'indoinvest-v1';
-
-const SCENARIO_DETAILS = {
-  BBCA: [
-    { m12: '9,000–10,500', ret: '+32% to +54%', key: 'Foreign net buy >Rp5T/mo, BI cut to 4.25%, Moody\'s stable' },
-    { m12: '7,800–8,800',  ret: '+14% to +29%', key: 'Loan growth 6–8%, IDR stable 16.5–17K, oil <$90' },
-    { m12: '6,500–7,500',  ret: '−5% to +10%',  key: 'BI holds 4.75%, deficit ~3%, no rating resolution' },
-    { m12: '5,800–6,800',  ret: '−15% to 0%',   key: 'Downgrade Baa3, IDR >18K, oil >$110, deficit >3%' },
-    { m12: '4,800–6,000',  ret: '−30% to −12%', key: 'Sub-IG, IDR >20K, BI hikes 7%+, capital controls' },
-  ],
-  BBRI: [
-    { m12: '4,500–5,200', ret: '+29% to +49%', key: 'Credit cost <3%, micro NPL improving, BI cuts' },
-    { m12: '4,000–4,600', ret: '+15% to +32%', key: 'Credit cost ~3.2%, loan growth 8–10%, NIM recovery' },
-    { m12: '3,300–3,800', ret: '−5% to +9%',   key: 'Credit cost >3.5%, micro NPL flat, GDP slows to 4.5%' },
-    { m12: '2,800–3,400', ret: '−20% to −2%',  key: 'Credit cost >4%, Danantara interference, IDR >18K' },
-    { m12: '2,200–2,800', ret: '−37% to −20%', key: 'Systemic micro defaults, dividend cut, recapitalization' },
-  ],
-  BMRI: [
-    { m12: '6,200–7,200', ret: '+28% to +49%', key: 'Loan growth >12%, NIM >5%, digital metrics surprise' },
-    { m12: '5,500–6,300', ret: '+14% to +30%', key: 'Loan growth 8–10%, stable quality, dividend maintained' },
-    { m12: '4,600–5,400', ret: '−5% to +12%',  key: 'No catalyst, foreign sell slows, range-bound' },
-    { m12: '3,800–4,600', ret: '−22% to −5%',  key: 'Corporate NPL >3%, SOE stress, NIM compression >50bps' },
-    { m12: '3,000–3,800', ret: '−38% to −21%', key: 'Systemic corporate default, BUMN recapitalization' },
-  ],
-};
-
-function loadStorage() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+/** 0–100 macro health score. >60 = constructive, 40–60 = neutral, <40 = stressed */
+function computeHealthScore(values) {
+  const macroIds = ['fx','sbn10y','oil','foreignFlow','biRate','ihsg','moodys'];
+  let score = 0; let total = 0;
+  macroIds.forEach(id => {
+    const ind = INDICATORS.find(i => i.id === id);
+    const v = values[id];
+    if (!ind || v === undefined) return;
+    const zones = ind.zones;
+    const z = getZone(ind, v);
+    const idx = zones.indexOf(z);
+    // 0=best → score 100; last=worst → score 0
+    const pts = Math.round(100 * (zones.length - 1 - idx) / (zones.length - 1));
+    score += pts; total += 100;
+  });
+  return total > 0 ? Math.round(score / total * 100) : 50;
 }
 
-function saveStorage(obj) {
+function healthLabel(score) {
+  if (score >= 65) return { label: 'Constructive', color: '#1E8449' };
+  if (score >= 45) return { label: 'Neutral',      color: '#D35400' };
+  if (score >= 30) return { label: 'Stressed',     color: '#C0392B' };
+  return               { label: 'Crisis Mode',   color: '#7B241C' };
+}
+
+// ─── Storage ──────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = 'indoinvest-v2';
+
+function loadStorage() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
+}
+function persistStorage(obj) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(obj)); } catch {}
 }
 
-export default function Dashboard() {
-  const [values, setValues] = useState({});
-  const [history, setHistory] = useState([]);
-  const [loaded, setLoaded] = useState(false);
-  const [activeTicker, setActiveTicker] = useState(0);
-  const [lastUpdate, setLastUpdate] = useState(null);
-  const [fetchStatus, setFetchStatus] = useState(null);
-  const [saving, setSaving] = useState(false);
-  const [expandedScenario, setExpandedScenario] = useState(-1);
+// ─── Scenario detail text ─────────────────────────────────────────────────────
 
+const SCENARIO_DETAILS = {
+  BBCA: [
+    { m12:'9,000–10,500', ret:'+32% to +54%', key:'Foreign net buy >Rp5T/mo, BI cut to 4.25%, Moody\'s stable, IDR <16,000' },
+    { m12:'7,800–8,800',  ret:'+14% to +29%', key:'Loan growth 6–8%, IDR stable 16.5–17K, oil <$90, no rating action' },
+    { m12:'6,500–7,500',  ret:'−5% to +10%',  key:'BI holds, fiscal deficit ~3%, IDR rangebound, no resolution' },
+    { m12:'5,800–6,800',  ret:'−15% to 0%',   key:'Downgrade Baa3, IDR >18K, oil >$110, deficit breaches 3%' },
+    { m12:'4,800–6,000',  ret:'−30% to −12%', key:'Sub-IG, IDR >20K, BI hikes to 7%+, capital controls' },
+  ],
+  BBRI: [
+    { m12:'4,500–5,200', ret:'+29% to +49%', key:'Credit cost <3%, micro NPL improving, BI cuts, commodity tailwind' },
+    { m12:'4,000–4,600', ret:'+15% to +32%', key:'Credit cost ~3.2%, loan growth 8–10%, NIM recovery, stable policy' },
+    { m12:'3,300–3,800', ret:'−5% to +9%',   key:'Credit cost >3.5%, micro NPL flat, GDP slows to 4.5%, no catalyst' },
+    { m12:'2,800–3,400', ret:'−20% to −2%',  key:'Credit cost >4%, Danantara interference, IDR >18K, foreign sell' },
+    { m12:'2,200–2,800', ret:'−37% to −20%', key:'Systemic micro defaults, dividend cut, government recapitalization' },
+  ],
+  BMRI: [
+    { m12:'6,200–7,200', ret:'+28% to +49%', key:'Loan growth >12%, NIM >5%, digital banking metrics surprise' },
+    { m12:'5,500–6,300', ret:'+14% to +30%', key:'Loan growth 8–10%, asset quality stable, dividend maintained' },
+    { m12:'4,600–5,400', ret:'−5% to +12%',  key:'No catalyst, foreign sell slows, corporate credit rangebound' },
+    { m12:'3,800–4,600', ret:'−22% to −5%',  key:'Corporate NPL >3%, SOE stress, NIM compression >50bps, BUMN drag' },
+    { m12:'3,000–3,800', ret:'−38% to −21%', key:'Systemic corporate default wave, BUMN recap, BI emergency hike' },
+  ],
+};
+
+// ─── Component ────────────────────────────────────────────────────────────────
+
+export default function Dashboard() {
+  const [values, setValues]             = useState({});
+  const [history, setHistory]           = useState([]);
+  const [loaded, setLoaded]             = useState(false);
+  const [activeTicker, setActiveTicker] = useState(0);
+  const [lastUpdate, setLastUpdate]     = useState(null);
+  const [marketState, setMarketState]   = useState(null);
+  const [fetchStatus, setFetchStatus]   = useState(null); // null | 'fetching' | 'ok:...' | 'error:...'
+  const [saving, setSaving]             = useState(false);
+  const [expanded, setExpanded]         = useState(-1);
+  const [liveFields, setLiveFields]     = useState(new Set()); // fields updated in last fetch
+
+  // Load persisted data
   useEffect(() => {
     const data = loadStorage();
     if (data?.current) {
@@ -300,81 +346,135 @@ export default function Dashboard() {
     setLoaded(true);
   }, []);
 
-  const saveSnapshot = useCallback((v, hist) => {
+  const doSave = useCallback((v, hist) => {
     setSaving(true);
     const now = new Date().toISOString();
     const nh = [...hist, { date: now, values: { ...v } }].slice(-90);
     setHistory(nh);
     setLastUpdate(now);
-    saveStorage({ current: v, history: nh, lastUpdate: now });
+    persistStorage({ current: v, history: nh, lastUpdate: now });
     setSaving(false);
-    return nh;
   }, []);
 
   const fetchData = useCallback(async () => {
     setFetchStatus('fetching');
+    setLiveFields(new Set());
     try {
       const resp = await fetch('/api/fetch-market', { method: 'POST' });
       const data = await resp.json();
-      if (!resp.ok) {
-        setFetchStatus('error: ' + (data.error || resp.statusText));
-        return;
-      }
-      const newValues = { ...values };
-      const fields = ['fx','sbn10y','oil','ihsg','bbcaPrice','bbriPrice','bmriPrice','foreignFlow','biRate'];
-      fields.forEach(f => {
-        if (data[f] !== undefined && data[f] !== null) newValues[f] = parseFloat(data[f]);
+      if (!resp.ok) { setFetchStatus('error: ' + (data.error || resp.statusText)); return; }
+
+      const updated = new Set();
+      setValues(prev => {
+        const next = { ...prev };
+        const autoFields = data.autoFields || [];
+        autoFields.forEach(f => {
+          if (data[f] !== undefined && data[f] !== null) {
+            const newVal = parseFloat(data[f]);
+            if (!isNaN(newVal)) { next[f] = newVal; updated.add(f); }
+          }
+        });
+        return next;
       });
-      setValues(newValues);
-      saveSnapshot(newValues, history);
-      setFetchStatus('updated: ' + (data.date || new Date().toLocaleDateString()));
+      setLiveFields(updated);
+      if (data.marketState) setMarketState(data.marketState);
+      setFetchStatus(`ok: ${updated.size} fields updated · ${data.date || new Date().toLocaleDateString()}`);
+
+      // Auto-save after successful fetch
+      setValues(v => { doSave(v, history); return v; });
+
     } catch (e) {
       setFetchStatus('error: ' + (e.message || 'fetch failed'));
     }
-  }, [values, history, saveSnapshot]);
+  }, [history, doSave]);
 
-  const updateValue = (id, val) => setValues(prev => ({ ...prev, [id]: val }));
+  const updateValue = (id, val) => {
+    setValues(prev => ({ ...prev, [id]: val }));
+    setLiveFields(prev => { const s = new Set(prev); s.delete(id); return s; });
+  };
 
-  if (!loaded) {
-    return <div style={{ padding: 20, color: 'var(--color-text-secondary)' }}>Loading…</div>;
-  }
+  if (!loaded) return <div style={{ padding:20, color:'var(--color-text-secondary)' }}>Loading…</div>;
 
-  const ticker = TICKERS[activeTicker];
-  const probs = computeProbs(values, ticker);
-  const ai = getAction(ticker, values);
-  const macroInds = INDICATORS.filter(i => !i.ticker);
+  const ticker  = TICKERS[activeTicker];
+  const probs   = computeProbs(values, ticker);
+  const ai      = getAction(ticker, values);
+  const health  = computeHealthScore(values);
+  const hl      = healthLabel(health);
+  const macroInds  = INDICATORS.filter(i => !i.ticker);
   const tickerInds = INDICATORS.filter(i => i.ticker === ticker);
-  const details = SCENARIO_DETAILS[ticker];
+  const details    = SCENARIO_DETAILS[ticker];
 
   return (
-    <div style={{ padding: '4px 0' }}>
-      {/* Top bar */}
-      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:8, marginBottom:12 }}>
-        <div style={{ fontSize:11, color:'var(--color-text-secondary)' }}>
-          {lastUpdate
-            ? `Last: ${new Date(lastUpdate).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}`
-            : 'No snapshot yet'}
+    <div style={{ padding:'4px 0' }}>
+
+      {/* ── Market health bar ───────────────────────────────────────────── */}
+      <div style={{
+        display:'flex', alignItems:'center', gap:12, marginBottom:14,
+        padding:'10px 14px', borderRadius:10,
+        background:'var(--color-background-secondary)',
+        border:'1px solid var(--color-border-tertiary)',
+      }}>
+        {/* Score arc */}
+        <div style={{
+          width:52, height:52, borderRadius:'50%', flexShrink:0,
+          background:`conic-gradient(${hl.color} ${health * 3.6}deg, #222 0deg)`,
+          display:'flex', alignItems:'center', justifyContent:'center',
+        }}>
+          <div style={{
+            width:38, height:38, borderRadius:'50%',
+            background:'var(--color-background-secondary)',
+            display:'flex', alignItems:'center', justifyContent:'center',
+          }}>
+            <span style={{ fontSize:13, fontWeight:700, color:hl.color }}>{health}</span>
+          </div>
+        </div>
+        <div style={{ flex:1 }}>
+          <div style={{ fontSize:11, fontWeight:600, color:hl.color }}>{hl.label}</div>
+          <div style={{ fontSize:10, color:'var(--color-text-secondary)', marginTop:2 }}>
+            Macro health score · 100 = fully constructive
+          </div>
+        </div>
+        <div style={{ textAlign:'right' }}>
+          {marketState && (
+            <div style={{
+              fontSize:9, fontWeight:700, letterSpacing:0.5,
+              color: marketState === 'REGULAR' ? '#1E8449' : '#8a8a8a',
+              background: marketState === 'REGULAR' ? 'rgba(30,132,73,0.1)' : 'rgba(100,100,100,0.1)',
+              border: `1px solid ${marketState === 'REGULAR' ? 'rgba(30,132,73,0.2)' : 'rgba(100,100,100,0.2)'}`,
+              borderRadius:3, padding:'2px 6px', display:'inline-block',
+            }}>
+              IDX {marketState}
+            </div>
+          )}
+          <div style={{ fontSize:10, color:'var(--color-text-tertiary)', marginTop:4 }}>
+            {lastUpdate
+              ? new Date(lastUpdate).toLocaleDateString('en-GB',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})
+              : 'no snapshot'}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Top action bar ──────────────────────────────────────────────── */}
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', gap:8, marginBottom:10, flexWrap:'wrap' }}>
+        <div style={{ fontSize:10, color:'var(--color-text-tertiary)' }}>
+          6 fields auto · 4 manual
         </div>
         <div style={{ display:'flex', gap:6 }}>
-          <button
-            onClick={fetchData}
-            disabled={fetchStatus === 'fetching'}
+          <button onClick={fetchData} disabled={fetchStatus==='fetching'}
             style={{
-              fontSize:13, padding:'6px 14px', fontWeight:500,
-              background: fetchStatus === 'fetching' ? 'var(--color-background-secondary)' : 'var(--color-background-info)',
-              color: fetchStatus === 'fetching' ? 'var(--color-text-secondary)' : 'var(--color-text-info)',
-              border:'none', borderRadius:6,
+              fontSize:12, padding:'6px 14px', fontWeight:600, border:'none', borderRadius:6,
+              background: fetchStatus==='fetching' ? 'var(--color-background-secondary)' : '#1e3554',
+              color: fetchStatus==='fetching' ? 'var(--color-text-secondary)' : '#93c5fd',
+              cursor: fetchStatus==='fetching' ? 'default' : 'pointer',
             }}>
-            {fetchStatus === 'fetching' ? 'Fetching live data…' : '⚡ Fetch today\'s data'}
+            {fetchStatus==='fetching' ? '⏳ Fetching…' : '⚡ Live fetch'}
           </button>
-          <button
-            onClick={() => saveSnapshot(values, history)}
+          <button onClick={() => doSave(values, history)} disabled={saving}
             style={{
-              fontSize:13, padding:'6px 14px', fontWeight:500,
+              fontSize:12, padding:'6px 12px', fontWeight:500,
               background:'var(--color-background-elevated)',
               color:'var(--color-text-primary)',
-              border:'1px solid var(--color-border-tertiary)',
-              borderRadius:6,
+              border:'1px solid var(--color-border-tertiary)', borderRadius:6,
             }}>
             {saving ? 'Saving…' : '💾 Save'}
           </button>
@@ -384,68 +484,71 @@ export default function Dashboard() {
       {/* Status pill */}
       {fetchStatus && fetchStatus !== 'fetching' && (
         <div style={{
-          fontSize:11, padding:'4px 10px', marginBottom:10, borderRadius:4,
-          background: fetchStatus.startsWith('error') ? 'rgba(192,57,43,0.12)' : 'rgba(30,134,73,0.12)',
-          color: fetchStatus.startsWith('error') ? '#C0392B' : '#1E8449',
-          border: `1px solid ${fetchStatus.startsWith('error') ? 'rgba(192,57,43,0.2)' : 'rgba(30,134,73,0.2)'}`,
+          fontSize:11, padding:'5px 10px', marginBottom:10, borderRadius:5,
+          background: fetchStatus.startsWith('error') ? 'rgba(192,57,43,0.1)' : 'rgba(30,132,73,0.1)',
+          color: fetchStatus.startsWith('error') ? '#e74c3c' : '#2ecc71',
+          border: `1px solid ${fetchStatus.startsWith('error') ? 'rgba(192,57,43,0.2)' : 'rgba(30,132,73,0.2)'}`,
         }}>
-          {fetchStatus}
+          {fetchStatus.startsWith('error') ? '⚠ ' : '✓ '}{fetchStatus.replace(/^(ok|error): ?/, '')}
         </div>
       )}
 
-      {/* Ticker tabs */}
+      {/* ── Ticker tabs ─────────────────────────────────────────────────── */}
       <div style={{ display:'flex', gap:4, marginBottom:12 }}>
         {TICKERS.map((t, i) => (
-          <button key={t}
-            onClick={() => { setActiveTicker(i); setExpandedScenario(-1); }}
+          <button key={t} onClick={() => { setActiveTicker(i); setExpanded(-1); }}
             style={{
-              padding:'7px 20px',
-              border:`${activeTicker===i?'1.5':'1'}px solid ${activeTicker===i?'var(--color-border-primary)':'var(--color-border-tertiary)'}`,
-              borderRadius:8,
-              background: activeTicker===i ? 'var(--color-background-elevated)' : 'var(--color-background-secondary)',
+              padding:'7px 20px', borderRadius:8, fontSize:13,
+              fontWeight: activeTicker===i ? 700 : 400,
+              border: `${activeTicker===i?'1.5':'1'}px solid ${activeTicker===i?'var(--color-border-primary)':'var(--color-border-tertiary)'}`,
+              background: activeTicker===i ? 'var(--color-background-elevated)' : 'transparent',
               color: activeTicker===i ? 'var(--color-text-primary)' : 'var(--color-text-secondary)',
-              fontWeight: activeTicker===i ? 600 : 400,
-              fontSize:13,
-              transition:'all .1s',
             }}>
             {t}
           </button>
         ))}
       </div>
 
-      {/* Current position card */}
+      {/* ── Position card ───────────────────────────────────────────────── */}
       <div style={{
-        background: ai.color+'14', border:`1.5px solid ${ai.color}35`,
+        background:`${ai.color}12`, border:`1.5px solid ${ai.color}30`,
         borderRadius:10, padding:'12px 16px', marginBottom:14,
       }}>
         <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', flexWrap:'wrap', gap:6 }}>
-          <div>
-            <span style={{ fontSize:10, fontWeight:600, color:ai.color, textTransform:'uppercase', letterSpacing:0.6 }}>
+          <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+            <span style={{ fontSize:10, fontWeight:700, color:ai.color, textTransform:'uppercase', letterSpacing:0.6 }}>
               {ai.zone}
             </span>
-            <span style={{ fontSize:20, fontWeight:600, marginLeft:10, color:'var(--color-text-primary)' }}>
+            <span style={{ fontSize:20, fontWeight:700, color:'var(--color-text-primary)' }}>
               Rp {(values[ticker.toLowerCase()+'Price']||0).toLocaleString()}
             </span>
+            {liveFields.has(ticker.toLowerCase()+'Price') && (
+              <span style={{
+                fontSize:9, fontWeight:700, color:'#1E8449',
+                background:'rgba(30,132,73,0.12)', border:'1px solid rgba(30,132,73,0.25)',
+                borderRadius:3, padding:'1px 5px', letterSpacing:0.3,
+              }}>LIVE</span>
+            )}
           </div>
           <div style={{ fontSize:12, color:'var(--color-text-secondary)' }}>{ai.action}</div>
         </div>
       </div>
 
-      {/* Scenario probability grid */}
+      {/* ── Scenario probability grid ───────────────────────────────────── */}
       <div style={{ display:'grid', gridTemplateColumns:'repeat(5,1fr)', gap:4, marginBottom:14 }}>
         {SCENARIOS.map((s, i) => {
           const diff = probs[i] - BASE_PROBS[ticker][i];
           return (
             <div key={s} style={{
-              background: S_COLORS[i]+'10', borderRadius:8, padding:'8px 4px',
+              background:`${S_COLORS[i]}10`, borderRadius:8, padding:'8px 4px',
               textAlign:'center', border:`1px solid ${S_COLORS[i]}22`,
             }}>
               <div style={{ fontSize:22, fontWeight:700, color:S_COLORS[i] }}>{probs[i]}%</div>
               <div style={{ fontSize:9, color:S_COLORS[i], lineHeight:1.3, marginTop:2 }}>{s}</div>
               {diff !== 0 && (
                 <div style={{
-                  fontSize:9, fontWeight:600, marginTop:2,
-                  color: diff > 0 ? (i<2?'#1E8449':'#C0392B') : (i<2?'#C0392B':'#1E8449'),
+                  fontSize:9, fontWeight:700, marginTop:2,
+                  color: diff > 0 ? (i < 2 ? '#1E8449' : '#C0392B') : (i < 2 ? '#C0392B' : '#1E8449'),
                 }}>
                   {diff > 0 ? '+' : ''}{diff}
                 </div>
@@ -455,114 +558,61 @@ export default function Dashboard() {
         })}
       </div>
 
-      {/* Indicator sliders */}
+      {/* ── Indicators ──────────────────────────────────────────────────── */}
       <div style={{ marginBottom:14 }}>
-        <div style={{ fontSize:10, fontWeight:600, color:'var(--color-text-tertiary)', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>
-          Macro Indicators — auto-filled or adjust manually
-        </div>
+        <SectionLabel>Macro Indicators</SectionLabel>
+        {macroInds.map(ind => (
+          <IndicatorRow
+            key={ind.id} ind={ind}
+            value={values[ind.id] ?? ind.default}
+            isLive={liveFields.has(ind.id)}
+            onChange={val => updateValue(ind.id, val)}
+          />
+        ))}
 
-        {macroInds.map(ind => {
-          const v = values[ind.id] ?? ind.default;
-          const z = ind.isSelect
-            ? (ind.zones.find(zone => v <= zone.max) || ind.zones[ind.zones.length-1])
-            : getZone(ind, v);
-          return (
-            <div key={ind.id} style={{
-              display:'grid', gridTemplateColumns:'120px 1fr 72px',
-              gap:6, alignItems:'center',
-              padding:'5px 10px', marginBottom:3,
-              background:'var(--color-background-secondary)',
-              borderRadius:5, borderLeft:`3px solid ${z.color}`,
-            }}>
-              <div style={{ fontSize:11, fontWeight:500, color:'var(--color-text-primary)' }}>{ind.name}</div>
-              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                {ind.isSelect ? (
-                  <select value={v} onChange={e => updateValue(ind.id, parseInt(e.target.value))} style={{ flex:1, fontSize:11 }}>
-                    {ind.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                  </select>
-                ) : (
-                  <>
-                    <input type="range"
-                      min={ind.id==='foreignFlow' ? -8 : ind.thresholds[0].below * 0.7}
-                      max={ind.id==='foreignFlow' ? 10  : ind.thresholds[ind.thresholds.length-1].below * (ind.thresholds[ind.thresholds.length-1].below > 100 ? 1 : 1.05)}
-                      step={ind.step} value={v}
-                      onChange={e => updateValue(ind.id, parseFloat(e.target.value))}
-                      style={{ flex:1 }} />
-                    <input type="number" value={v} step={ind.step}
-                      onChange={e => updateValue(ind.id, parseFloat(e.target.value)||0)}
-                      style={{ width:64, fontSize:11, textAlign:'right' }} />
-                  </>
-                )}
-              </div>
-              <div style={{ fontSize:10, fontWeight:600, color:z.color, textAlign:'right' }}>{z.label}</div>
-            </div>
-          );
-        })}
-
-        <div style={{ fontSize:10, fontWeight:600, color:'var(--color-text-tertiary)', margin:'10px 0 6px', textTransform:'uppercase', letterSpacing:0.5 }}>
-          {ticker} Price
-        </div>
-        {tickerInds.map(ind => {
-          const v = values[ind.id] ?? ind.default;
-          const z = getZone(ind, v);
-          return (
-            <div key={ind.id} style={{
-              display:'grid', gridTemplateColumns:'120px 1fr 72px',
-              gap:6, alignItems:'center',
-              padding:'5px 10px', marginBottom:3,
-              background:'var(--color-background-secondary)',
-              borderRadius:5, borderLeft:`3px solid ${z.color}`,
-            }}>
-              <div style={{ fontSize:11, fontWeight:500, color:'var(--color-text-primary)' }}>{ind.name} price</div>
-              <div style={{ display:'flex', alignItems:'center', gap:6 }}>
-                <input type="range"
-                  min={ind.thresholds[0].below * 0.8}
-                  max={ind.thresholds[ind.thresholds.length-2].below * 1.1}
-                  step={ind.step} value={v}
-                  onChange={e => updateValue(ind.id, parseFloat(e.target.value))}
-                  style={{ flex:1 }} />
-                <input type="number" value={v} step={ind.step}
-                  onChange={e => updateValue(ind.id, parseFloat(e.target.value)||0)}
-                  style={{ width:72, fontSize:11, textAlign:'right' }} />
-              </div>
-              <div style={{ fontSize:10, fontWeight:600, color:z.color, textAlign:'right' }}>{z.label}</div>
-            </div>
-          );
-        })}
+        <SectionLabel style={{ marginTop:10 }}>{ticker} Price</SectionLabel>
+        {tickerInds.map(ind => (
+          <IndicatorRow
+            key={ind.id} ind={ind}
+            value={values[ind.id] ?? ind.default}
+            isLive={liveFields.has(ind.id)}
+            onChange={val => updateValue(ind.id, val)}
+          />
+        ))}
       </div>
 
-      {/* 12-month scenario accordion */}
-      <div style={{ fontSize:10, fontWeight:600, color:'var(--color-text-tertiary)', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>
-        {ticker} — 12-month scenarios
-      </div>
+      {/* ── 12-month scenario accordion ─────────────────────────────────── */}
+      <SectionLabel>{ticker} — 12-month scenarios</SectionLabel>
       {SCENARIOS.map((s, i) => {
         const d = details[i];
-        const isOpen = expandedScenario === i;
+        const isOpen = expanded === i;
         return (
-          <div key={s}
-            onClick={() => setExpandedScenario(isOpen ? -1 : i)}
+          <div key={s} onClick={() => setExpanded(isOpen ? -1 : i)}
             style={{
               border:`${isOpen?'1.5':'1'}px solid ${isOpen ? S_COLORS[i]+'55' : 'var(--color-border-tertiary)'}`,
               borderRadius:8, padding:'9px 13px', marginBottom:4, cursor:'pointer',
-              background: isOpen ? S_COLORS[i]+'08' : 'var(--color-background-secondary)',
-              transition:'all .1s',
+              background: isOpen ? `${S_COLORS[i]}0A` : 'var(--color-background-secondary)',
+              transition:'background .1s, border-color .1s',
             }}>
             <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center' }}>
               <div style={{ display:'flex', alignItems:'center', gap:8 }}>
                 <span style={{ fontSize:13, fontWeight:600, color:S_COLORS[i] }}>{s}</span>
-                <span style={{ fontSize:11, padding:'1px 6px', borderRadius:3, background:S_COLORS[i]+'18', color:S_COLORS[i], fontWeight:600 }}>
-                  {probs[i]}%
-                </span>
+                <span style={{
+                  fontSize:11, padding:'1px 6px', borderRadius:3,
+                  background:`${S_COLORS[i]}18`, color:S_COLORS[i], fontWeight:600,
+                }}>{probs[i]}%</span>
               </div>
               <div style={{ display:'flex', alignItems:'center', gap:10 }}>
                 <span style={{ fontSize:12, fontWeight:500, color:'var(--color-text-primary)' }}>Rp {d.m12}</span>
-                <span style={{ fontSize:11, fontWeight:600, color: d.ret.startsWith('+') ? '#1E8449' : '#C0392B' }}>{d.ret}</span>
+                <span style={{ fontSize:11, fontWeight:600, color: d.ret.startsWith('+') ? '#1E8449' : '#C0392B' }}>
+                  {d.ret}
+                </span>
                 <span style={{ fontSize:10, color:'var(--color-text-secondary)', display:'inline-block', transform:isOpen?'rotate(90deg)':'none', transition:'transform .1s' }}>▶</span>
               </div>
             </div>
             {isOpen && (
               <div style={{ marginTop:8, paddingTop:8, borderTop:'1px solid var(--color-border-tertiary)' }}>
-                <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginBottom:4 }}>Key triggers for this scenario</div>
+                <div style={{ fontSize:11, color:'var(--color-text-secondary)', marginBottom:4 }}>Key triggers</div>
                 <div style={{ fontSize:12, lineHeight:1.6, color:'var(--color-text-primary)' }}>{d.key}</div>
               </div>
             )}
@@ -570,49 +620,30 @@ export default function Dashboard() {
         );
       })}
 
-      {/* History table */}
+      {/* ── Snapshot history ────────────────────────────────────────────── */}
       {history.length > 1 && (
         <div style={{ marginTop:16 }}>
-          <div style={{ fontSize:10, fontWeight:600, color:'var(--color-text-tertiary)', marginBottom:6, textTransform:'uppercase', letterSpacing:0.5 }}>
-            Snapshot history — last {Math.min(history.length, 7)} saves
-          </div>
+          <SectionLabel>Snapshot history — last {Math.min(history.length, 7)}</SectionLabel>
           <div style={{ overflowX:'auto' }}>
-            <div style={{ display:'grid', gridTemplateColumns:'60px repeat(5,1fr) 60px 60px 60px', gap:3, fontSize:10, minWidth:440 }}>
-              <div style={{ fontWeight:600, color:'var(--color-text-secondary)', padding:3 }}>Date</div>
-              {SCENARIOS.map((s,i) => (
-                <div key={s} style={{ fontWeight:600, color:S_COLORS[i], padding:3, textAlign:'center', fontSize:9 }}>
-                  {s.split(' ')[0]}
-                </div>
-              ))}
-              {['BBCA','BBRI','BMRI'].map(t => (
-                <div key={t} style={{ fontWeight:600, color:'var(--color-text-secondary)', padding:3, textAlign:'center', fontSize:9 }}>{t}</div>
-              ))}
+            <div style={{ display:'grid', gridTemplateColumns:'58px repeat(5,1fr) 60px 60px 60px', gap:2, fontSize:10, minWidth:440 }}>
+              <Cell header>Date</Cell>
+              {SCENARIOS.map((s,i) => <Cell key={s} header style={{ color:S_COLORS[i], fontSize:9 }}>{s.split(' ')[0]}</Cell>)}
+              {['BBCA','BBRI','BMRI'].map(t => <Cell key={t} header style={{ fontSize:9 }}>{t}</Cell>)}
               {history.slice(-7).map((entry, ei) => {
                 const p = computeProbs(entry.values, ticker);
                 const dt = new Date(entry.date);
                 return (
                   <React.Fragment key={ei}>
-                    <div style={{ padding:3, color:'var(--color-text-secondary)', fontSize:10 }}>
-                      {dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}
-                    </div>
+                    <Cell>{dt.toLocaleDateString('en-GB',{day:'2-digit',month:'short'})}</Cell>
                     {p.map((prob, pi) => (
-                      <div key={pi} style={{
-                        padding:3, textAlign:'center', borderRadius:2,
-                        background: S_COLORS[pi] + Math.round(prob*0.5).toString(16).padStart(2,'0'),
-                        fontWeight:600, color:S_COLORS[pi], fontSize:10,
-                      }}>
-                        {prob}%
-                      </div>
+                      <Cell key={pi} style={{
+                        background:`${S_COLORS[pi]}${Math.round(prob*0.5).toString(16).padStart(2,'0')}`,
+                        color:S_COLORS[pi], fontWeight:600, textAlign:'center',
+                      }}>{prob}%</Cell>
                     ))}
-                    <div style={{ padding:3, textAlign:'center', fontSize:10, color:'var(--color-text-primary)' }}>
-                      {(entry.values.bbcaPrice||0).toLocaleString()}
-                    </div>
-                    <div style={{ padding:3, textAlign:'center', fontSize:10, color:'var(--color-text-primary)' }}>
-                      {(entry.values.bbriPrice||0).toLocaleString()}
-                    </div>
-                    <div style={{ padding:3, textAlign:'center', fontSize:10, color:'var(--color-text-primary)' }}>
-                      {(entry.values.bmriPrice||0).toLocaleString()}
-                    </div>
+                    <Cell center>{(entry.values.bbcaPrice||0).toLocaleString()}</Cell>
+                    <Cell center>{(entry.values.bbriPrice||0).toLocaleString()}</Cell>
+                    <Cell center>{(entry.values.bmriPrice||0).toLocaleString()}</Cell>
                   </React.Fragment>
                 );
               })}
@@ -621,12 +652,128 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Footer */}
-      <div style={{ fontSize:10, color:'var(--color-text-tertiary)', padding:'14px 0 4px', marginTop:10, lineHeight:1.6 }}>
-        Tap "Fetch today's data" to auto-pull live market data via AI web search. Probabilities adjust automatically.
-        "Save" records a snapshot for trend tracking. Moody's status is manual — update only on rating actions.
+      {/* ── Footer ──────────────────────────────────────────────────────── */}
+      <div style={{ fontSize:10, color:'var(--color-text-tertiary)', padding:'14px 0 4px', marginTop:12, lineHeight:1.7 }}>
+        Live prices via Yahoo Finance (BBCA.JK, BBRI.JK, BMRI.JK, ^JKSE, IDR=X, BZ=F) — no API key required.
+        BI Rate, SBN yield, foreign flow, and Moody's must be updated manually.
         Not financial advice.
       </div>
+    </div>
+  );
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionLabel({ children, style }) {
+  return (
+    <div style={{
+      fontSize:10, fontWeight:600, color:'var(--color-text-tertiary)',
+      textTransform:'uppercase', letterSpacing:0.5, marginBottom:6,
+      ...style,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function IndicatorRow({ ind, value, isLive, onChange }) {
+  const isManual = MANUAL_FIELDS.has(ind.id);
+  const z = ind.isSelect
+    ? (ind.zones.find(zone => value <= zone.max) || ind.zones[ind.zones.length-1])
+    : getZone(ind, value);
+
+  const [showHint, setShowHint] = useState(false);
+
+  return (
+    <div style={{
+      display:'grid', gridTemplateColumns:'1fr 60px',
+      marginBottom:3, borderRadius:6,
+      background:'var(--color-background-secondary)',
+      borderLeft:`3px solid ${z.color}`,
+      overflow:'hidden',
+      outline: isLive ? `1px solid ${z.color}44` : 'none',
+      transition:'outline .3s',
+    }}>
+      {/* Label + control row */}
+      <div style={{ display:'grid', gridTemplateColumns:'118px 1fr', gap:8, alignItems:'center', padding:'5px 10px' }}>
+        <div style={{ display:'flex', alignItems:'center', gap:5 }}>
+          <span style={{ fontSize:11, fontWeight:500, color:'var(--color-text-primary)' }}>{ind.name}</span>
+          {isLive && (
+            <span style={{
+              fontSize:8, fontWeight:700, color:'#1E8449', background:'rgba(30,132,73,0.12)',
+              border:'1px solid rgba(30,132,73,0.2)', borderRadius:2, padding:'0 3px', letterSpacing:0.3,
+            }}>LIVE</span>
+          )}
+          {isManual && !isLive && (
+            <button
+              onClick={() => setShowHint(h => !h)}
+              title={MANUAL_HINTS[ind.id]}
+              style={{
+                fontSize:9, color:'#D35400', background:'rgba(211,84,0,0.1)',
+                border:'1px solid rgba(211,84,0,0.2)', borderRadius:2,
+                padding:'0 3px', cursor:'pointer',
+              }}>✎</button>
+          )}
+        </div>
+
+        {/* Input */}
+        {ind.isSelect ? (
+          <select value={value} onChange={e => onChange(parseInt(e.target.value))} style={{ fontSize:11, flex:1 }}>
+            {ind.options.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        ) : (
+          <div style={{ display:'flex', alignItems:'center', gap:6 }}>
+            <input type="range"
+              min={ind.id==='foreignFlow' ? -8  : ind.thresholds[0].below * 0.7}
+              max={ind.id==='foreignFlow' ? 10  : ind.thresholds[ind.thresholds.length-1].below * (ind.thresholds[ind.thresholds.length-1].below > 100 ? 1 : 1.05)}
+              step={ind.step} value={value}
+              onChange={e => onChange(parseFloat(e.target.value))}
+              style={{ flex:1 }} />
+            <input type="number" value={value} step={ind.step}
+              onChange={e => onChange(parseFloat(e.target.value)||0)}
+              style={{ width: ind.ticker ? 72 : 64, fontSize:11, textAlign:'right' }} />
+          </div>
+        )}
+      </div>
+
+      {/* Zone badge */}
+      <div style={{
+        fontSize:10, fontWeight:600, color:z.color,
+        background:`${z.color}10`,
+        display:'flex', alignItems:'center', justifyContent:'center',
+        borderLeft:`1px solid ${z.color}20`,
+        textAlign:'center', padding:'0 4px',
+        lineHeight:1.2,
+      }}>
+        {z.label}
+      </div>
+
+      {/* Manual hint row */}
+      {showHint && (
+        <div style={{
+          gridColumn:'1 / -1',
+          fontSize:10, color:'#D35400', background:'rgba(211,84,0,0.06)',
+          borderTop:'1px solid rgba(211,84,0,0.15)',
+          padding:'4px 10px', lineHeight:1.5,
+        }}>
+          ✎ {MANUAL_HINTS[ind.id]}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Cell({ children, header, center, style }) {
+  return (
+    <div style={{
+      padding:3, borderRadius:2,
+      color: header ? 'var(--color-text-secondary)' : 'var(--color-text-primary)',
+      fontWeight: header ? 600 : 400,
+      textAlign: center ? 'center' : undefined,
+      fontSize: 10,
+      ...style,
+    }}>
+      {children}
     </div>
   );
 }
