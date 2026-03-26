@@ -332,9 +332,6 @@ export default function Dashboard() {
     return () => clearInterval(id);
   }, [refreshInterval, lastUpdate]);
 
-  // Wire up auto-refresh
-  useAutoRefresh(fetchData, refreshInterval);
-
   // Sync values to URL hash (for sharing)
   useEffect(() => {
     if (Object.keys(values).length === 0) return;
@@ -342,6 +339,7 @@ export default function Dashboard() {
     window.history.replaceState(null, '', '#' + encoded);
   }, [values]);
 
+  // ── doSave + fetchData declared BEFORE useAutoRefresh to avoid TDZ crash ────
   const doSave = useCallback(async (v, hist, note = '', dataSource = 'manual') => {
     setSaving(true);
     try {
@@ -400,6 +398,9 @@ export default function Dashboard() {
       setFetchStatus('error: ' + (e.message || 'fetch failed'));
     }
   }, [history, doSave]);
+
+  // Wire up auto-refresh (must come AFTER fetchData is defined above)
+  useAutoRefresh(fetchData, refreshInterval);
 
   const updateValue = (id, val) => {
     setValues(prev => ({ ...prev, [id]: val }));
