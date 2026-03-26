@@ -59,3 +59,19 @@ INSERT INTO indoinvest_manual_values (field_id, value) VALUES
   ('foreignFlow', -3.0),
   ('moodys',      1)
 ON CONFLICT (field_id) DO NOTHING;
+
+-- ─── manual_history (additive migration — run after initial schema) ───────────
+-- Logs every change to manual indicator values
+CREATE TABLE IF NOT EXISTS indoinvest_manual_history (
+  id         uuid        DEFAULT gen_random_uuid() PRIMARY KEY,
+  changed_at timestamptz DEFAULT now(),
+  field_id   text        NOT NULL,
+  old_value  numeric,
+  new_value  numeric     NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS indoinvest_manual_history_field_idx
+  ON indoinvest_manual_history (field_id, changed_at DESC);
+
+ALTER TABLE indoinvest_manual_history ENABLE ROW LEVEL SECURITY;
+CREATE POLICY "public all manual history" ON indoinvest_manual_history FOR ALL USING (true) WITH CHECK (true);

@@ -76,3 +76,20 @@ button { font-family: inherit; cursor: pointer; }
 @media (max-width: 360px) {
   .scenario-grid { grid-template-columns: 1fr 1fr !important; }
 }
+
+/* ─── Print / Export ─────────────────────────────────────────────────────── */
+@media print {
+  /* Hide everything except the print card */
+  body * { visibility: hidden !important; }
+  .print-card, .print-card * { visibility: visible !important; }
+  .print-card {
+    display: block !important;
+    position: fixed !important;
+    top: 0; left: 0;
+    width: 100%;
+    background: #fff !important;
+    color: #111 !important;
+    padding: 24px !important;
+  }
+  @page { margin: 0.5cm; size: A5 landscape; }
+}

@@ -10,7 +10,8 @@
 
 const SB_URL = process.env.SUPABASE_URL;
 const SB_KEY = process.env.SUPABASE_SERVICE_KEY;
-const TABLE  = 'indoinvest_manual_values';
+const TABLE         = 'indoinvest_manual_values';
+const HISTORY_TABLE = 'indoinvest_manual_history';
 
 const ALLOWED_FIELDS = new Set(['biRate', 'sbn10y', 'foreignFlow', 'moodys']);
 
@@ -76,6 +77,19 @@ export default async function handler(req, res) {
       updated_at: new Date().toISOString(),
     };
     try {
+      // 1. Get current value for old_value in history log
+      let oldValue = null;
+      try {
+        const prev = await fetch(`${SB_URL}/rest/v1/${TABLE}?field_id=eq.${encodeURIComponent(field_id)}&select=value`, {
+          headers: { ...sbHeaders(), Prefer: 'return=representation' },
+        });
+        if (prev.ok) {
+          const rows = await prev.json();
+          oldValue = rows[0]?.value ?? null;
+        }
+      } catch {}
+
+      // 2. Upsert current value
       const r = await fetch(`${SB_URL}/rest/v1/${TABLE}`, {
         method:  'POST', // Supabase upsert uses POST with Prefer: merge-duplicates
         headers: sbHeaders(),
@@ -86,6 +100,21 @@ export default async function handler(req, res) {
         return res.status(500).json({ error: `Supabase upsert failed: ${err}` });
       }
       const row = await r.json();
+
+      // 3. Log to history table (fire-and-forget — don't block response)
+      if (oldValue === null || Number(oldValue) !== Number(value)) {
+        fetch(`${SB_URL}/rest/v1/${HISTORY_TABLE}`, {
+          method:  'POST',
+          headers: { ...sbHeaders(), Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            field_id,
+            old_value:  oldValue !== null ? Number(oldValue) : null,
+            new_value:  Number(value),
+            changed_at: new Date().toISOString(),
+          }),
+        }).catch(() => {});
+      }
+
       return res.status(200).json({ ok: true, row: row[0] || null, source: 'db' });
     } catch (e) {
       return res.status(500).json({ error: e.message });
